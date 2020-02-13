@@ -38,7 +38,7 @@ To use the script you either pass a pcap file `(-f)` or list of pcap files `(-l)
 
 ### Default configuration
 
-To use the basic configuration, which will get you information about most of the procols you simply run:
+To use the basic configuration, which will get you statistics for most of the procols you simply run:
 
 ```shell
 pcap-iograph-plotter.py -f [pcap-file]
