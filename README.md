@@ -1,7 +1,8 @@
 # pcap-iograph-plotter
 
 A script to generate either I/O graph or csv file of protocol statistics in pcap file.
-Uses tshark for obtaining the infromation and plotly to generate plots.
+Uses tshark for obtaining the infromation and plotly to generate plots. This script requires 
+pandas library installed to run and plotly library installed if you want to plot the data.
 
 ## Usage
 
