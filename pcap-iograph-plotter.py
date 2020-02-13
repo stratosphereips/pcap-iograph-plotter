@@ -30,7 +30,7 @@ def parse_arguments():
         nargs="+",
         default=["count"],
         help="Specify aggregation functions to be used by tshark. Specify either one, \
-            which should be used for all protocols or for each protocol seperate function.",
+            which should be used for all protocols or for each protocol specift seperate function.",
     )
     parser.add_argument(
         "-s",
@@ -42,7 +42,7 @@ def parse_arguments():
     parser.add_argument(
         "-t",
         "--tshark",
-        help="Specify path to tshark in it is not in PATH.",
+        help="Specify path to tshark if it is not in PATH.",
         default="tshark",
     )
     parser.add_argument(
