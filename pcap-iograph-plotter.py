@@ -3,6 +3,8 @@ import argparse
 from itertools import cycle
 
 import pandas as pd
+from plotly import subplots
+import plotly.graph_objs as go
 
 
 def parse_arguments():
@@ -21,23 +23,15 @@ def parse_arguments():
         "-p",
         "--protocols",
         nargs="+",
-        default=["dns", "ipv6", "ssh", "telnet", "irc", "tls", "tcp", "udp", "http"],
+        default=["tcp", "udp"],
         help="Network protocols that you want to analyze. Defaults are TCP and UDP.",
-    )
-    parser.add_argument(
-        "-a",
-        "--aggregations",
-        nargs="+",
-        default=["count"],
-        help="Specify aggregation functions to be used by tshark. Specify either one, \
-            which should be used for all protocols or for each protocol specift seperate function.",
     )
     parser.add_argument(
         "-s",
         "--step",
-        help="Set time step of the graph in seconds. Default is 600 seconds.",
+        help="Set time step of the graph in seconds. Default is 1 second.",
         action="store",
-        default="600",
+        default="1",
     )
     parser.add_argument(
         "-t",
@@ -53,90 +47,132 @@ def parse_arguments():
 
 
 def generate_commands(args, pcap):
-    stats = []
-    for function, protocol in zip(cycle(args.aggregations), args.protocols):
-        if function.upper() != "BYTES":
-            stats.append(f"{function.upper()}({protocol}) {protocol}")
-        else:
-            stats.append(f"{function.upper()}() {protocol}")
+    ag_count = []
+    ag_bytes = []
+    for protocol in args.protocols:
+        ag_count.append(f"COUNT({protocol.lower()}) {protocol.lower()}")
+        ag_bytes.append(f"BYTES() {protocol.lower()}")
+    tshark_cmd_count = f"{args.tshark};-r;{pcap};-qz;io,stat,{args.step},\
+                {','.join(ag_count)}"
+    tshark_cmd_bytes = f"{args.tshark};-r;{pcap};-qz;io,stat,{args.step},\
+                {','.join(ag_bytes)}"
 
-    tsharkCommand = f"{args.tshark};-r;{pcap};-qz;io,stat,{args.step},\
-                {','.join(stats)}"
-    grepCommand = "grep;-P;" + r"\d+\s+<>[Dur\s+\d+\s*\|\s+\d+]+"
+    grep_cmd = "grep;-P;" + r"\d+\s+<>[Dur\s+\d+\s*\|\s+\d+]+"
 
     tmp = []
     for i in range(5, 5 + len(args.protocols)):
         tmp.append(f"${i}")
 
-    awkCommand = 'awk;-F;[ |]+;{print $4","' + '","'.join(tmp) + "}"
+    awk_cmd = 'awk;-F;[ |]+;{print $4","' + '","'.join(tmp) + "}"
 
-    csvHeader = "time," + ",".join(args.protocols)
+    csv_head = "time," + ",".join(args.protocols)
 
     return {
-        "tshark": tsharkCommand,
-        "grep": grepCommand,
-        "awk": awkCommand,
-        "header": csvHeader,
+        "tshark_count": tshark_cmd_count,
+        "tshark_bytes": tshark_cmd_bytes,
+        "grep": grep_cmd,
+        "awk": awk_cmd,
+        "csv_head": csv_head,
     }
 
 
 def get_statistics(pcap, commands):
-    tshark = subprocess.run(commands["tshark"].split(";"), stdout=subprocess.PIPE)
-    if tshark.returncode != 0:
-        raise Exception("Tshark command failed.")
+    dfs = []
+    for tshark_cmd in ["tshark_count", "tshark_bytes"]:
+        tshark = subprocess.run(commands[tshark_cmd].split(";"), stdout=subprocess.PIPE)
+        if tshark.returncode != 0:
+            raise Exception("Tshark count command failed.")
 
-    grep = subprocess.run(
-        commands["grep"].split(";"), stdout=subprocess.PIPE, input=tshark.stdout
-    )
-    if tshark.returncode != 0:
-        raise Exception("Grep command failed.")
+        grep = subprocess.run(
+            commands["grep"].split(";"), stdout=subprocess.PIPE, input=tshark.stdout
+        )
+        if tshark.returncode != 0:
+            raise Exception("Grep command failed.")
 
-    awk = subprocess.run(
-        commands["awk"].split(";"), stdout=subprocess.PIPE, input=grep.stdout
-    )
-    if awk.returncode != 0:
-        raise Exception("Awk command failed.")
+        awk = subprocess.run(
+            commands["awk"].split(";"), stdout=subprocess.PIPE, input=grep.stdout
+        )
+        if awk.returncode != 0:
+            raise Exception("Awk command failed.")
 
-    data = commands["header"] + "\n" + awk.stdout.decode()
+        data = commands["csv_head"] + "\n" + awk.stdout.decode()
 
-    df = pd.DataFrame(
-        [x.split(",") for x in data.split("\n")[1:]],
-        columns=[x for x in data.split("\n")[0].split(",")],
-    )
-    return df
+        dfs.append(
+            pd.DataFrame(
+                [x.split(",") for x in data.split("\n")[1:]],
+                columns=[x for x in data.split("\n")[0].split(",")],
+            )
+        )
+    return dfs
 
 
 def generate_graphs(df, pcap, protocols):
-    from plotly.subplots import make_subplots
-    import plotly.graph_objects as go
+    colors = {
+        "dns": "#636EFA",
+        "ipv6": "#EF553B",
+        "ssh": "#00CC96",
+        "telnet": "#AB63FA",
+        "irc": "#19D3F3",
+        "tls": "#E763FA",
+        "tcp": "#FECB52",
+        "udp": "#FFA15A",
+        "http": "#FF6692",
+    }
+    traces_count = []
+    traces_bytes = []
+    for protocol in protocols:
+        traces_count.append(
+            go.Scatter(
+                name=protocol,
+                x=dfs[0].time,
+                y=dfs[0][protocol],
+                line=dict(color=colors[protocol]),
+                xaxis="x1",
+                yaxis="y1",
+                legendgroup="{}".format(protocol),
+                showlegend=True,
+            )
+        )
+        traces_bytes.append(
+            go.Scatter(
+                name=protocol,
+                x=dfs[1].time,
+                y=dfs[1][protocol],
+                line=dict(color=colors[protocol]),
+                xaxis="x1",
+                yaxis="y1",
+                legendgroup="{}".format(protocol),
+                showlegend=False,
+            )
+        )
 
-    size = len(protocols)
-    lines = []
-    for i in range(0, size):
-        protocol = protocols[i]
-        lines.append(go.Line(name=protocol.capitalize(), x=df.time, y=df[protocol]))
+    fig = subplots.make_subplots(rows=2, cols=1)
 
-    fig = go.Figure(data=lines)
-    fig.update_layout(title_text=pcap)
-    fig.show(renderer="svg")
+    for trc, trb in zip(traces_count, traces_bytes):
+        fig.append_trace(trc, 1, 1)
+        fig.append_trace(trb, 2, 1)
+
+    fig["layout"]["xaxis1"].update(title="Time (Seconds)")
+    fig["layout"]["xaxis2"].update(title="Time (Seconds)")
+    fig["layout"]["yaxis1"].update(title="Packets")
+    fig["layout"]["yaxis2"].update(title="Bytes")
+    fig.update_layout(title="{}".format(pcap))
+
+    fig.show()
 
 
 if __name__ == "__main__":
 
     args = parse_arguments()
 
-    if len(args.aggregations) != 1 and len(args.aggregations) != len(args.protocols):
-        raise Exception(
-            "Number of aggregation functions must be either one or same as number of protocols."
-        )
-
     pcaps = [args.file] if args.list is None else args.list.readlines()
 
     for pcap in pcaps:
         commands = generate_commands(args, pcap.rstrip("\n"))
-        df = get_statistics(pcap, commands)
+        dfs = get_statistics(pcap, commands)
+        for i, typ in enumerate(["packets", "bytes"]):
+            with open(f"{pcap}-{typ}.csv", "w") as f:
+                f.write(dfs[i].to_csv(index=False, sep=","))
         if args.csv:
-            with open(f"{pcap}.csv", "w") as f:
-                f.write(df.to_csv(sep=","))
             continue
-        generate_graphs(df, pcap, args.protocols)
+        generate_graphs(dfs, pcap, list(map(str.lower, args.protocols)))
